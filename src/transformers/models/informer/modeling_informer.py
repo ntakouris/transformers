@@ -1491,6 +1491,8 @@ class InformerModel(InformerPreTrainedModel):
         sequence_length = sequence.shape[1]
         indices = [lag - shift for lag in self.config.lags_sequence]
 
+        #print(f"indices: {indices}")
+
         if max(indices) + subsequences_length > sequence_length:
             raise ValueError(
                 f"lags cannot go further than history length, found lag {max(indices)} "
@@ -1501,7 +1503,12 @@ class InformerModel(InformerPreTrainedModel):
         for lag_index in indices:
             begin_index = -lag_index - subsequences_length
             end_index = -lag_index if lag_index > 0 else None
-            lagged_values.append(sequence[:, begin_index:end_index, ...])
+
+            #print(f"sequence[:, begin_index:end_index, ...] - {begin_index}..{end_index}")
+
+            current_val = sequence[:, begin_index:end_index, ...]
+            #print(current_val.shape)
+            lagged_values.append(current_val)
         return torch.stack(lagged_values, dim=-1)
 
     def create_network_inputs(
@@ -1744,6 +1751,8 @@ class InformerForPrediction(InformerPreTrainedModel):
         sliced_params = params
         if trailing_n is not None:
             sliced_params = [p[:, -trailing_n:] for p in params]
+        
+        sliced_params = [param[:, :, 0].unsqueeze(-1) for param in params]
         return self.distribution_output.distribution(sliced_params, loc=loc, scale=scale)
 
     @add_start_docstrings_to_model_forward(INFORMER_INPUTS_DOCSTRING)
@@ -2020,13 +2029,13 @@ class InformerForPrediction(InformerPreTrainedModel):
             lagged_sequence = self.model.get_lagged_subsequences(
                 sequence=repeated_past_values,
                 subsequences_length=1 + k,
-                shift=1,
+                shift=k,
             )
 
             lags_shape = lagged_sequence.shape
             reshaped_lagged_sequence = lagged_sequence.reshape(lags_shape[0], lags_shape[1], -1)
 
-            decoder_input = torch.cat((reshaped_lagged_sequence, repeated_features[:, : k + 1]), dim=-1)
+            decoder_input = torch.cat((reshaped_lagged_sequence[:, 0, :].unsqueeze(-1), repeated_features[:, k, :].unsqueeze(1)), dim=-1)
 
             dec_output = decoder(inputs_embeds=decoder_input, encoder_hidden_states=repeated_enc_last_hidden)
             dec_last_hidden = dec_output.last_hidden_state
@@ -2035,15 +2044,17 @@ class InformerForPrediction(InformerPreTrainedModel):
             distr = self.output_distribution(params, loc=repeated_loc, scale=repeated_scale)
             next_sample = distr.sample()
 
+
             repeated_past_values = torch.cat(
                 (repeated_past_values, (next_sample - repeated_loc) / repeated_scale), dim=1
             )
+
             future_samples.append(next_sample)
 
         concat_future_samples = torch.cat(future_samples, dim=1)
 
         return SampleTSPredictionOutput(
             sequences=concat_future_samples.reshape(
-                (-1, num_parallel_samples, self.config.prediction_length) + self.target_shape,
+                (-1, num_parallel_samples, self.config.prediction_length)
             )
         )
