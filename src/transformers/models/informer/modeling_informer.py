@@ -2029,7 +2029,7 @@ class InformerForPrediction(InformerPreTrainedModel):
             lagged_sequence = self.model.get_lagged_subsequences(
                 sequence=repeated_past_values,
                 subsequences_length=1 + k,
-                shift=k,
+                shift=1,
             )
 
             lags_shape = lagged_sequence.shape
